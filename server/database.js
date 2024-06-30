@@ -67,12 +67,21 @@ function initializeDatabase() {
 
     // Insert sample data if it doesn't already exist
     const saltRounds = 10;
-    const password1 = bcrypt.hashSync('password1', saltRounds);
+    const users = [
+      { username: 'user1', password: 'password1', good_client: 1 },
+      { username: 'user2', password: 'password2', good_client: 0 },
+      { username: 'user3', password: 'password3', good_client: 1 },
+      { username: 'user4', password: 'password4', good_client: 0 },
+      { username: 'user5', password: 'password5', good_client: 0 }
+    ];
 
-    db.get(`SELECT * FROM users WHERE username = 'user1'`, (err, row) => {
-      if (!row) {
-        db.run(`INSERT INTO users (username, password, good_client) VALUES ('user1', ?, 1)`, [password1]);
-      }
+    users.forEach(user => {
+      const hashedPassword = bcrypt.hashSync(user.password, saltRounds);
+      db.get(`SELECT * FROM users WHERE username = ?`, [user.username], (err, row) => {
+        if (!row) {
+          db.run(`INSERT INTO users (username, password, good_client) VALUES (?, ?, ?)`, [user.username, hashedPassword, user.good_client]);
+        }
+      });
     });
 
     db.get(`SELECT COUNT(*) as count FROM car_models`, (err, row) => {
@@ -80,8 +89,6 @@ function initializeDatabase() {
         db.run(`INSERT INTO car_models (name, engine_power, cost) VALUES ('Model A', 50, 10000)`);
         db.run(`INSERT INTO car_models (name, engine_power, cost) VALUES ('Model B', 100, 12000)`);
         db.run(`INSERT INTO car_models (name, engine_power, cost) VALUES ('Model C', 150, 14000)`);
-        db.run(`INSERT INTO car_models (name, engine_power, cost) VALUES ('Model S', 310, 79999)`);
-        db.run(`INSERT INTO car_models (name, engine_power, cost) VALUES ('Model X', 360, 89999)`);
       }
     });
 
@@ -97,8 +104,6 @@ function initializeDatabase() {
         db.run(`INSERT INTO accessories (name, price) VALUES ('spare tire', 200)`);
         db.run(`INSERT INTO accessories (name, price) VALUES ('assisted driving', 1200)`);
         db.run(`INSERT INTO accessories (name, price) VALUES ('automatic braking', 800)`);
-        db.run(`INSERT INTO accessories (name, price) VALUES ('Sunroof', 1200)`);
-        db.run(`INSERT INTO accessories (name, price) VALUES ('Leather seats', 2000)`);
       }
     });
   });

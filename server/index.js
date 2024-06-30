@@ -1,4 +1,3 @@
-// Other imports and configurations
 const express = require('express');
 const session = require('express-session');
 const passport = require('passport');
@@ -31,11 +30,19 @@ app.use(session({
 app.use(passport.initialize());
 app.use(passport.session());
 
-// Add this middleware to log req.user
+// Middleware for logging user info
 app.use((req, res, next) => {
   console.log('User:', req.user);
   next();
 });
+
+// Middleware to check if user is authenticated
+function ensureAuthenticated(req, res, next) {
+  if (req.isAuthenticated()) {
+    return next();
+  }
+  res.status(401).json({ message: 'Not authenticated' });
+}
 
 // Passport local strategy for authentication
 passport.use(new LocalStrategy((username, password, done) => {
@@ -69,12 +76,8 @@ app.get('/logout', (req, res) => {
   });
 });
 
-app.get('/profile', (req, res) => {
-  if (req.isAuthenticated()) {
-    res.json({ user: req.user });
-  } else {
-    res.status(401).json({ message: 'Not authenticated' });
-  }
+app.get('/profile', ensureAuthenticated, (req, res) => {
+  res.json({ user: req.user });
 });
 
 app.get('/login-failure', (req, res) => {
@@ -85,7 +88,7 @@ app.get('/login-failure', (req, res) => {
 app.get('/car-models', (req, res) => {
   db.all('SELECT * FROM car_models', [], (err, rows) => {
     if (err) {
-      return res.status(500).json({ error: err.message });
+      return res.status(500).json({ error: 'Failed to fetch car models' });
     }
     res.json(rows);
   });
@@ -95,66 +98,47 @@ app.get('/car-models', (req, res) => {
 app.get('/accessories', (req, res) => {
   db.all('SELECT * FROM accessories', [], (err, rows) => {
     if (err) {
-      return res.status(500).json({ error: err.message });
+      return res.status(500).json({ error: 'Failed to fetch accessories' });
     }
     res.json(rows);
   });
 });
 
 // Endpoint to save configurations
-app.post('/configurations', (req, res) => {
-  if (!req.isAuthenticated()) {
-    return res.status(401).json({ message: 'Not authenticated' });
-  }
-
+app.post('/configurations', ensureAuthenticated, (req, res) => {
   const { car_model_id, accessories } = req.body;
   const userId = req.user.id;
-
-  console.log('Saving configuration for user:', userId);
-  console.log('Car Model ID:', car_model_id);
-  console.log('Accessories:', accessories);
 
   db.run(`INSERT INTO configurations (user_id, car_model_id, accessories) VALUES (?, ?, ?)`, [userId, car_model_id, JSON.stringify(accessories)], function (err) {
     if (err) {
       console.error('Error saving configuration:', err.message);
-      return res.status(500).json({ error: err.message });
+      return res.status(500).json({ error: 'Failed to save configuration' });
     }
-    console.log('Configuration saved with ID:', this.lastID);
     res.json({ id: this.lastID });
   });
 });
 
 // Endpoint to retrieve configurations
-app.get('/configurations', (req, res) => {
-  if (!req.isAuthenticated()) {
-    return res.status(401).json({ message: 'Not authenticated' });
-  }
+app.get('/configurations', ensureAuthenticated, (req, res) => {
   const userId = req.user.id;
-
-  console.log('Fetching configurations for user:', userId);
 
   db.all('SELECT * FROM configurations WHERE user_id = ?', [userId], (err, rows) => {
     if (err) {
       console.error('Error fetching configurations:', err.message);
-      return res.status(500).json({ error: err.message });
+      return res.status(500).json({ error: 'Failed to fetch configurations' });
     }
-    console.log('Configurations fetched:', rows);
     res.json(rows);
   });
 });
 
 // Endpoint to delete a configuration
-app.delete('/configurations/:id', (req, res) => {
-  if (!req.isAuthenticated()) {
-    return res.status(401).json({ message: 'Not authenticated' });
-  }
-
+app.delete('/configurations/:id', ensureAuthenticated, (req, res) => {
   const configurationId = req.params.id;
 
   db.run('DELETE FROM configurations WHERE id = ? AND user_id = ?', [configurationId, req.user.id], function(err) {
     if (err) {
       console.error('Error deleting configuration:', err.message);
-      return res.status(500).json({ error: err.message });
+      return res.status(500).json({ error: 'Failed to delete configuration' });
     }
     if (this.changes === 0) {
       return res.status(404).json({ message: 'Configuration not found' });

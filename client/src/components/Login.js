@@ -1,51 +1,56 @@
-// Example in Login.js
-
+// client/src/components/Login.js
 import React, { useState } from 'react';
-import { Form, Button, Container, Row, Col } from 'react-bootstrap';
+import axios from 'axios';
+import { useNavigate } from 'react-router-dom';
+import { Container, Form, Button, Card } from 'react-bootstrap';
 
-function Login() {
+const Login = ({ setUser }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const navigate = useNavigate();
 
-  const handleLogin = async (event) => {
-    event.preventDefault();
-    // handle login logic
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    axios.post('http://localhost:3001/login', { username, password }, { withCredentials: true })
+      .then(response => {
+        setUser(response.data.user);
+        navigate('/');
+      })
+      .catch(error => console.error('Error logging in:', error));
   };
 
   return (
-    <Container>
-      <Row className="justify-content-md-center">
-        <Col md="4">
-          <h2 className="text-center">Login</h2>
-          <Form onSubmit={handleLogin}>
-            <Form.Group controlId="formBasicEmail">
+    <Container className="d-flex justify-content-center align-items-center" style={{ height: '100vh' }}>
+      <Card style={{ width: '400px' }}>
+        <Card.Body>
+          <Card.Title className="text-center">Login</Card.Title>
+          <Form onSubmit={handleSubmit}>
+            <Form.Group controlId="formUsername">
               <Form.Label>Username</Form.Label>
               <Form.Control
                 type="text"
-                placeholder="Enter username"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
+                required
               />
             </Form.Group>
-
-            <Form.Group controlId="formBasicPassword">
+            <Form.Group controlId="formPassword">
               <Form.Label>Password</Form.Label>
               <Form.Control
                 type="password"
-                placeholder="Password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                required
               />
             </Form.Group>
-
-            <Button variant="primary" type="submit" className="mt-3">
+            <Button variant="primary" type="submit" className="w-100 mt-3">
               Login
             </Button>
           </Form>
-        </Col>
-      </Row>
+        </Card.Body>
+      </Card>
     </Container>
   );
-}
+};
 
 export default Login;
