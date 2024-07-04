@@ -5,10 +5,12 @@ const LocalStrategy = require('passport-local').Strategy;
 const bcrypt = require('bcryptjs');
 const path = require('path');
 const cors = require('cors');
+const axios = require('axios');
 const db = require('./database'); // Ensure this path is correct
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const ESTIMATION_SERVER_URL = 'http://localhost:3002/estimate'; // URL of the second server
 
 // Enable CORS with credentials
 app.use(cors({
@@ -90,17 +92,25 @@ app.get('/car-models', (req, res) => {
     if (err) {
       return res.status(500).json({ error: 'Failed to fetch car models' });
     }
+    console.log('Car Models:', rows); // Debugging line
     res.json(rows);
   });
 });
 
-// Endpoint to fetch accessories
+// Endpoint to fetch accessories with constraints
 app.get('/accessories', (req, res) => {
-  db.all('SELECT * FROM accessories', [], (err, rows) => {
+  db.all('SELECT * FROM accessories', [], (err, accessories) => {
     if (err) {
       return res.status(500).json({ error: 'Failed to fetch accessories' });
     }
-    res.json(rows);
+    db.all('SELECT * FROM accessory_constraints', [], (err, constraints) => {
+      if (err) {
+        return res.status(500).json({ error: 'Failed to fetch accessory constraints' });
+      }
+      console.log('Accessories:', accessories); // Debugging line
+      console.log('Constraints:', constraints); // Debugging line
+      res.json({ accessories, constraints });
+    });
   });
 });
 
@@ -109,12 +119,110 @@ app.post('/configurations', ensureAuthenticated, (req, res) => {
   const { car_model_id, accessories } = req.body;
   const userId = req.user.id;
 
-  db.run(`INSERT INTO configurations (user_id, car_model_id, accessories) VALUES (?, ?, ?)`, [userId, car_model_id, JSON.stringify(accessories)], function (err) {
+  const accessoryNames = JSON.parse(accessories);
+
+  // Fetch car model to apply constraints
+  db.get('SELECT engine_power FROM car_models WHERE id = ?', [car_model_id], (err, carModel) => {
     if (err) {
-      console.error('Error saving configuration:', err.message);
-      return res.status(500).json({ error: 'Failed to save configuration' });
+      console.error('Error fetching car model:', err.message);
+      return res.status(500).json({ error: 'Failed to fetch car model' });
     }
-    res.json({ id: this.lastID });
+
+    let maxAccessories;
+    if (carModel.engine_power === 50) {
+      maxAccessories = 4;
+    } else if (carModel.engine_power === 100) {
+      maxAccessories = 5;
+    } else {
+      maxAccessories = 7;
+    }
+
+    if (accessoryNames.length > maxAccessories) {
+      return res.status(400).json({ error: 'Exceeded maximum number of accessories' });
+    }
+
+    // Fetch constraints from the database
+    db.all('SELECT * FROM accessory_constraints', [], (err, constraints) => {
+      if (err) {
+        console.error('Error fetching constraints:', err.message);
+        return res.status(500).json({ error: 'Failed to fetch constraints' });
+      }
+
+      const accessorySet = new Set(accessoryNames);
+      for (let accessoryName of accessoryNames) {
+        const accessory = constraints.find(c => c.name === accessoryName);
+        if (accessory) {
+          if (accessory.requires_accessory_id && !accessorySet.has(accessory.requires_accessory_id)) {
+            return res.status(400).json({ error: `${accessoryName} requires ${accessory.requires_accessory_id}` });
+          }
+          if (accessory.incompatible_accessory_id && accessorySet.has(accessory.incompatible_accessory_id)) {
+            return res.status(400).json({ error: `${accessoryName} is incompatible with ${accessory.incompatible_accessory_id}` });
+          }
+        }
+      }
+
+      db.serialize(() => {
+        // Check if the user already has a configuration
+        db.get(`SELECT * FROM configurations WHERE user_id = ?`, [userId], (err, row) => {
+          if (err) {
+            console.error('Error checking existing configuration:', err.message);
+            return res.status(500).json({ error: 'Failed to check existing configuration' });
+          }
+
+          const saveConfiguration = () => {
+            // Save the new configuration
+            db.run(`INSERT INTO configurations (user_id, car_model_id, accessories) VALUES (?, ?, ?)`, [userId, car_model_id, accessories], function (err) {
+              if (err) {
+                console.error('Error saving configuration:', err.message);
+                return res.status(500).json({ error: 'Failed to save configuration' });
+              }
+              const configurationId = this.lastID;
+
+              // Decrease availability of the selected car model
+              db.run('UPDATE car_models SET availability = availability - 1 WHERE id = ?', [car_model_id], function (err) {
+                if (err) {
+                  console.error('Error updating car model availability:', err.message);
+                  return res.status(500).json({ error: 'Failed to update car model availability' });
+                }
+              });
+
+              // Decrease availability of the selected accessories
+              accessoryNames.forEach(accessoryName => {
+                db.run('UPDATE accessories SET availability = availability - 1 WHERE name = ?', [accessoryName], function (err) {
+                  if (err) {
+                    console.error('Error updating accessory availability:', err.message);
+                    return res.status(500).json({ error: 'Failed to update accessory availability' });
+                  }
+                });
+              });
+
+              // Fetch the estimation from the second server
+              axios.post(ESTIMATION_SERVER_URL, { accessories: accessoryNames, good_client: req.user.good_client })
+                .then(response => {
+                  res.json({ id: configurationId, estimation: response.data.estimation });
+                })
+                .catch(error => {
+                  console.error('Error fetching estimation:', error.message);
+                  res.status(500).json({ error: 'Failed to fetch estimation' });
+                });
+            });
+          };
+
+          if (row) {
+            // Replace existing configuration
+            db.run('DELETE FROM configurations WHERE id = ?', [row.id], function(err) {
+              if (err) {
+                console.error('Error deleting existing configuration:', err.message);
+                return res.status(500).json({ error: 'Failed to delete existing configuration' });
+              }
+              saveConfiguration();
+            });
+          } else {
+            saveConfiguration();
+          }
+        });
+      });
+    });
   });
 });
 
@@ -122,12 +230,24 @@ app.post('/configurations', ensureAuthenticated, (req, res) => {
 app.get('/configurations', ensureAuthenticated, (req, res) => {
   const userId = req.user.id;
 
-  db.all('SELECT * FROM configurations WHERE user_id = ?', [userId], (err, rows) => {
+  db.get('SELECT * FROM configurations WHERE user_id = ?', [userId], (err, row) => {
     if (err) {
-      console.error('Error fetching configurations:', err.message);
-      return res.status(500).json({ error: 'Failed to fetch configurations' });
+      console.error('Error fetching configuration:', err.message);
+      return res.status(500).json({ error: 'Failed to fetch configuration' });
     }
-    res.json(rows);
+    if (row) {
+      // Fetch the estimation from the second server
+      axios.post(ESTIMATION_SERVER_URL, { accessories: JSON.parse(row.accessories), good_client: req.user.good_client })
+        .then(response => {
+          res.json({ ...row, estimation: response.data.estimation });
+        })
+        .catch(error => {
+          console.error('Error fetching estimation:', error.message);
+          res.status(500).json({ error: 'Failed to fetch estimation' });
+        });
+    } else {
+      res.json([]);
+    }
   });
 });
 
@@ -135,15 +255,46 @@ app.get('/configurations', ensureAuthenticated, (req, res) => {
 app.delete('/configurations/:id', ensureAuthenticated, (req, res) => {
   const configurationId = req.params.id;
 
-  db.run('DELETE FROM configurations WHERE id = ? AND user_id = ?', [configurationId, req.user.id], function(err) {
+  db.get('SELECT * FROM configurations WHERE id = ? AND user_id = ?', [configurationId, req.user.id], (err, row) => {
     if (err) {
-      console.error('Error deleting configuration:', err.message);
-      return res.status(500).json({ error: 'Failed to delete configuration' });
+      console.error('Error fetching configuration:', err.message);
+      return res.status(500).json({ error: 'Failed to fetch configuration' });
     }
-    if (this.changes === 0) {
+    if (!row) {
       return res.status(404).json({ message: 'Configuration not found' });
     }
-    res.json({ message: 'Configuration deleted successfully' });
+
+    const accessoryNames = JSON.parse(row.accessories);
+
+    db.run('DELETE FROM configurations WHERE id = ? AND user_id = ?', [configurationId, req.user.id], function(err) {
+      if (err) {
+        console.error('Error deleting configuration:', err.message);
+        return res.status(500).json({ error: 'Failed to delete configuration' });
+      }
+      if (this.changes === 0) {
+        return res.status(404).json({ message: 'Configuration not found' });
+      }
+
+      // Increase availability of the selected car model
+      db.run('UPDATE car_models SET availability = availability + 1 WHERE id = ?', [row.car_model_id], function (err) {
+        if (err) {
+          console.error('Error updating car model availability:', err.message);
+          return res.status(500).json({ error: 'Failed to update car model availability' });
+        }
+      });
+
+      // Increase availability of the selected accessories
+      accessoryNames.forEach(accessoryName => {
+        db.run('UPDATE accessories SET availability = availability + 1 WHERE name = ?', [accessoryName], function (err) {
+          if (err) {
+            console.error('Error updating accessory availability:', err.message);
+            return res.status(500).json({ error: 'Failed to update accessory availability' });
+          }
+        });
+      });
+
+      res.json({ message: 'Configuration deleted successfully' });
+    });
   });
 });
 

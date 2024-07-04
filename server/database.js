@@ -24,6 +24,13 @@ const db = new sqlite3.Database(dbPath, (err) => {
 // Function to initialize the database and create tables
 function initializeDatabase() {
   db.serialize(() => {
+    // Drop existing tables if they exist
+    db.run(`DROP TABLE IF EXISTS users`);
+    db.run(`DROP TABLE IF EXISTS car_models`);
+    db.run(`DROP TABLE IF EXISTS accessories`);
+    db.run(`DROP TABLE IF EXISTS accessory_constraints`);
+    db.run(`DROP TABLE IF EXISTS configurations`);
+
     // Create users table
     db.run(`
       CREATE TABLE IF NOT EXISTS users (
@@ -40,7 +47,8 @@ function initializeDatabase() {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT,
         engine_power INTEGER,
-        cost INTEGER
+        cost INTEGER,
+        availability INTEGER DEFAULT 5
       );
     `);
 
@@ -49,7 +57,21 @@ function initializeDatabase() {
       CREATE TABLE IF NOT EXISTS accessories (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT,
-        price INTEGER
+        price INTEGER,
+        availability INTEGER DEFAULT 5
+      );
+    `);
+
+    // Create accessory constraints table
+    db.run(`
+      CREATE TABLE IF NOT EXISTS accessory_constraints (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        accessory_id INTEGER,
+        requires_accessory_id INTEGER,
+        incompatible_accessory_id INTEGER,
+        FOREIGN KEY (accessory_id) REFERENCES accessories(id),
+        FOREIGN KEY (requires_accessory_id) REFERENCES accessories(id),
+        FOREIGN KEY (incompatible_accessory_id) REFERENCES accessories(id)
       );
     `);
 
@@ -86,24 +108,41 @@ function initializeDatabase() {
 
     db.get(`SELECT COUNT(*) as count FROM car_models`, (err, row) => {
       if (row.count === 0) {
-        db.run(`INSERT INTO car_models (name, engine_power, cost) VALUES ('Model A', 50, 10000)`);
-        db.run(`INSERT INTO car_models (name, engine_power, cost) VALUES ('Model B', 100, 12000)`);
-        db.run(`INSERT INTO car_models (name, engine_power, cost) VALUES ('Model C', 150, 14000)`);
+        db.run(`INSERT INTO car_models (name, engine_power, cost, availability) VALUES ('Model A', 50, 10000, 5)`);
+        db.run(`INSERT INTO car_models (name, engine_power, cost, availability) VALUES ('Model B', 100, 12000, 5)`);
+        db.run(`INSERT INTO car_models (name, engine_power, cost, availability) VALUES ('Model C', 150, 14000, 5)`);
       }
     });
 
     db.get(`SELECT COUNT(*) as count FROM accessories`, (err, row) => {
       if (row.count === 0) {
-        db.run(`INSERT INTO accessories (name, price) VALUES ('radio', 300)`);
-        db.run(`INSERT INTO accessories (name, price) VALUES ('satellite navigator', 600)`);
-        db.run(`INSERT INTO accessories (name, price) VALUES ('bluetooth', 200)`);
-        db.run(`INSERT INTO accessories (name, price) VALUES ('power windows', 200)`);
-        db.run(`INSERT INTO accessories (name, price) VALUES ('extra front lights', 150)`);
-        db.run(`INSERT INTO accessories (name, price) VALUES ('extra rear lights', 150)`);
-        db.run(`INSERT INTO accessories (name, price) VALUES ('air conditioning', 600)`);
-        db.run(`INSERT INTO accessories (name, price) VALUES ('spare tire', 200)`);
-        db.run(`INSERT INTO accessories (name, price) VALUES ('assisted driving', 1200)`);
-        db.run(`INSERT INTO accessories (name, price) VALUES ('automatic braking', 800)`);
+        db.run(`INSERT INTO accessories (name, price, availability) VALUES ('radio', 300, 5)`);
+        db.run(`INSERT INTO accessories (name, price, availability) VALUES ('satellite navigator', 600, 5)`);
+        db.run(`INSERT INTO accessories (name, price, availability) VALUES ('bluetooth', 200, 5)`);
+        db.run(`INSERT INTO accessories (name, price, availability) VALUES ('power windows', 200, 5)`);
+        db.run(`INSERT INTO accessories (name, price, availability) VALUES ('extra front lights', 150, 5)`);
+        db.run(`INSERT INTO accessories (name, price, availability) VALUES ('extra rear lights', 150, 5)`);
+        db.run(`INSERT INTO accessories (name, price, availability) VALUES ('air conditioning', 600, 5)`);
+        db.run(`INSERT INTO accessories (name, price, availability) VALUES ('spare tire', 200, 5)`);
+        db.run(`INSERT INTO accessories (name, price, availability) VALUES ('assisted driving', 1200, 5)`);
+        db.run(`INSERT INTO accessories (name, price, availability) VALUES ('automatic braking', 800, 5)`);
+      }
+    });
+
+    db.get(`SELECT COUNT(*) as count FROM accessory_constraints`, (err, row) => {
+      if (row.count === 0) {
+        db.run(`INSERT INTO accessory_constraints (accessory_id, requires_accessory_id, incompatible_accessory_id) VALUES 
+          ((SELECT id FROM accessories WHERE name='bluetooth'), (SELECT id FROM accessories WHERE name='radio'), NULL)`);
+        db.run(`INSERT INTO accessory_constraints (accessory_id, requires_accessory_id, incompatible_accessory_id) VALUES 
+          ((SELECT id FROM accessories WHERE name='satellite navigator'), (SELECT id FROM accessories WHERE name='bluetooth'), NULL)`);
+        db.run(`INSERT INTO accessory_constraints (accessory_id, requires_accessory_id, incompatible_accessory_id) VALUES 
+          ((SELECT id FROM accessories WHERE name='extra rear lights'), (SELECT id FROM accessories WHERE name='extra front lights'), NULL)`);
+        db.run(`INSERT INTO accessory_constraints (accessory_id, requires_accessory_id, incompatible_accessory_id) VALUES 
+          ((SELECT id FROM accessories WHERE name='air conditioning'), (SELECT id FROM accessories WHERE name='power windows'), NULL)`);
+        db.run(`INSERT INTO accessory_constraints (accessory_id, requires_accessory_id, incompatible_accessory_id) VALUES 
+          ((SELECT id FROM accessories WHERE name='assisted driving'), NULL, (SELECT id FROM accessories WHERE name='automatic braking'))`);
+        db.run(`INSERT INTO accessory_constraints (accessory_id, requires_accessory_id, incompatible_accessory_id) VALUES 
+          ((SELECT id FROM accessories WHERE name='spare tire'), NULL, (SELECT id FROM accessories WHERE name='assisted driving'))`);
       }
     });
   });
